@@ -1,65 +1,90 @@
-import socket, random, threading, csv
+import socket
 
-def encrypt(k, m):
-    return ''.join(map(chr, [(x + k) % 65536 for x in map(ord, m)]))
+def get_part_key(key_publ_2, key_prim, key_publ_1):
+    key_part_2 = key_publ_2 ** key_prim % key_publ_1
+    return key_part_2
 
-def decrypt(k, c):
-    return ''.join(map(chr, [(x - k) % 65536 for x in map(ord, c)]))
+def get_full_key(key_part_1, key_prim, key_publ_1):
+    key_full = key_part_1 ** key_prim % key_publ_1
+    return key_full
 
-def listening(sock):
-    global private_key
+def encoding (msg, key):
+    lst = list(msg)
+    for i in range(len(lst)):
+        variab = ord(lst[i]) + key
+        variab = chr(variab)
+        lst[i] = variab
+    return(''.join(lst))
+
+def decoding (msg, key):
+    lst = list(msg)
+    for i in range(len(lst)):
+        variab = ord(lst[i]) - key
+        variab = chr(variab)
+        lst[i] = variab
+    return(''.join(lst))
+
+def generation(flagg, key_prim, key_publ_2):
+    global flag
+    while flagg<3:
+        flagg+= 1
+        if flagg == 1:
+                msg = str(key_publ_2)
+                sock.send(msg.encode())
+                try:
+                    key_publ_1 = int(sock.recv(1024))
+                except ValueError:
+                    print("Ошибка: данный ключ является некорректным")
+                    flag = False
+                    break
+        if flagg == 2:
+                key_part_2 = get_part_key(key_publ_2, key_prim, key_publ_1)
+                msg = str(key_part_2)
+                sock.send(msg.encode())
+                key_part_1 = int(sock.recv(1024))
+        if flagg == 3:
+                key_full_2 = get_full_key(key_part_1, key_prim, key_publ_1)
+                print(key_part_1, key_prim, key_publ_1)
+                msg = str(key_full_2)
+                sock.send(msg.encode())
+                key_full_1 = int(sock.recv(1024))
+                print(key_full_1)
+                with open ('client_keys.txt','w') as f:
+                    f.write(str(key_full_1))
+    return key_full_1
+
+def send_recv(sock, key_full_2):
+    msg = input('Введите сообщение: ')
+    encod_msg = encoding(msg, key_full_2)
+    sock.send(encod_msg.encode())
+    msg = sock.recv(1024).decode()
+    decod_msg= decoding(msg,key_full_2)
+    print('Сообщение от сервера: ', decod_msg)
+    return decod_msg
+
+flag = True
+sock = socket.socket()
+sock.setblocking(5)
+sock.connect(('localhost', 9090))
+print('Соединение')
+
+try:
+    with open ('client_keys.txt','r') as f:
+        for line in f:
+            key_full_1 = int(line)
+except:
+    key_prim = 199
+    key_publ_2 = 197
+    flagg= 0
+    msg = ''
+    key_full_1 = generation(flagg, key_prim, key_publ_2)
+
+if flag:
+    port = send_recv(sock, key_full_1)
+    sock.close()
+    sock = socket.socket()
+    sock.connect(('localhost', 1024))
     while True:
-        msg = sock.recv(1024).decode()
-        msg = decrypt(private_key, msg)
-        print(msg)
-
-
-def read_keys():
-    global sock
-    with open("client_key.csv", "r", newline = "") as keyfile:
-        reader = csv.reader(keyfile, delimiter = ";")
-        return [int(item) for item in next(reader)]
-
-def get_keys():
-    global sock
-    server_keys = sock.recv(1024).decode().split("|")#g, p, A
-    server_keys = [int(item) for item in server_keys]
-    try:
-        keys = read_keys()
-    except FileNotFoundError:
-        b = random.randint(100,999)
-        g = server_keys[0]
-        p = server_keys[1]
-        my_b = pow(g, b) % p
-        serv_a = server_keys[2]
-        private = pow(serv_a, b) % p
-        keys = [b, g, p, my_b, serv_a, private]
-        with open("client_key.csv", "w", newline = "") as keyfile:
-            writer = csv.writer(keyfile, delimiter = ";")
-            writer.writerow(keys)
-    sock.send(str(keys[3]).encode())
-    return keys
-
-
-sock = socket.socket()
-sock.setblocking(True)
-sock.connect(('localhost', 10101))
-print(f"Socket connected at port 10101")
-all_keys = get_keys()
-private_key = all_keys[5]
-port = int(decrypt(private_key,sock.recv(1024).decode()))
+        send_recv(sock, key_full_1)
 sock.close()
-sock = socket.socket()
-sock.setblocking(True)
-sock.connect(('localhost', port))
-print(f"Socket binded at port {port}")
-threading.Thread(target = listening, args = (sock, ), daemon = True).start()
-
-while True:
-    cmd = input()
-    if cmd == "stop":
-        break
-    cmd = encrypt(private_key, cmd)
-    sock.send(cmd.encode())
-
-sock.close()
+print('Соединение остановлено')
